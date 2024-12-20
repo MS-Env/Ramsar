@@ -1,5 +1,5 @@
-// Define the study area (You can also draw a polygon on the map or import a shapefile)
-var geometry = Study_area.geometry();
+// Define the study area as a feature collection (You can also draw a polygon on the map or import a shapefile)
+var geometry = Zarivar.geometry();
 
 // Select one of the Landsat collections below based on the time period
 //var satellite = imageCollection; //1985-2000
@@ -27,7 +27,7 @@ Map.addLayer(geometry,false);
 // Function to calculate water area for a given image (Choose one of the indices below)
 // Pay attention to the band names. Replace the appropriate band names based on the Landsat collection 
 var AWEI_func = function(img){
-  var AWEI = img.expression(
+  var AWEI_exp = img.expression(
     'BlueBand + 2.5*GreenBand - 1.5*(NIRBand + SWIR1Band) - 0.25*SWIR2Band', //AWEIsh
     //'(BlueBand+GreenBand-NIRBand-SWIR1Band-SWIR2Band)/(BlueBand+GreenBand+NIRBand+SWIR1Band+SWIR2Band)',
     //'(GreenBand*RedBand)**0.5', //saliniti index
@@ -51,7 +51,7 @@ var AWEI_func = function(img){
       SWIR2Band : img.select('SR_B7'),
     }
     )
-  return AWEI.clip(geometry)
+  return AWEI_exp.clip(geometry)
   .set('system:time_start',img.get('system:time_start'));
 };
 
@@ -66,7 +66,7 @@ print(Collection_L5_L);
 var landsatImage = Collection_L5_L.sort('CLOUD_COVER')
     .first()
     .clip(geometry);
-print("Landsat image cloud cover = ", landsatImage.get('CLOUD_COVER'));
+print("Landsat image cloud cover = ",landsatImage.get('CLOUD_COVER'));
 var number1 = ee.Number(landsatImage.get('CLOUD_COVER'));
 var number2 = ee.Number(0.1);
 
@@ -77,11 +77,11 @@ var Collection_L5 = satellite
                         .filterDate(startDate, endDate)
                         .filter(ee.Filter.lt('CLOUD_COVER',Landsat_CLOUD_COVER));
 print(Collection_L5)
-var mndwi = Collection_L5.map(AWEI_func);
-mndwi = mndwi.mean().clip(geometry).rename('NDWI');
+var AWEI_ = Collection_L5.map(AWEI_func);
+AWEI_ = AWEI_.mean().clip(geometry).rename('AWEI');
 // Simple Thresholding
-var waterMndwi = mndwi.gt(0)
-Map.addLayer(waterMndwi, {palette: ['red', 'yellow', 'green', 'cyan', 'blue']}, 'AWEI_0th', false);
+var waterAWEI_ = AWEI_.gt(0)
+Map.addLayer(waterAWEI_, {palette: ['red', 'yellow', 'green', 'cyan', 'blue']}, 'AWEI_0th', false);
 // Otsu Thresholding
 // Source https://code.earthengine.google.com/e9c699d7b5ef811d0a67c02756473e9d
 // Use lower scale to avoid edges from small buildings
@@ -95,9 +95,9 @@ var debug = true
 // Set this higher to discard smaller edges
 var minEdgeLength = 0
 var th = computeThresholdUsingOtsu(
-  mndwi, scale, bounds, cannyThreshold, cannySigma, minValue, debug, minEdgeLength)
+  AWEI_, scale, bounds, cannyThreshold, cannySigma, minValue, debug, minEdgeLength)
 print('Threshold', th)
-var waterOtsu = mndwi.gt(th);
+var waterOtsu = AWEI_.gt(th);
 Map.addLayer(waterOtsu, {palette: ['red', 'yellow', 'green', 'cyan', 'blue']}, 'AWEI_otsu', true);
 /***
  * Compute a threshold using Otsu method (bimodal)
@@ -119,7 +119,7 @@ function computeThresholdUsingOtsu(image, scale, bounds, cannyThreshold, cannySi
         }
         edge = edgeLong;
     }
-    // buffer around NDWI edges
+    // buffer around AWEI edges
     var edgeBuffer = edge.focal_max(ee.Number(scale), 'square', 'meters');
     if(minEdgeValue) {
       var edgeMin = image.reduceNeighborhood(ee.Reducer.min(), ee.Kernel.circle(ee.Number(scale), 'meters'))
@@ -196,28 +196,28 @@ var aoiArea = ee.Image.pixelArea().divide(1e6).reduceRegion({
     scale: 10,
 }).get('area');
 print('AOI area (km2):', aoiArea);
-// Create NDWI mask
-var ndwiThreshold = mndwi.gte(th);
-var ndwiMask = ndwiThreshold.updateMask(ndwiThreshold);
-Map.addLayer(ndwiThreshold, {palette:['black','white']}, 'NDWI Binary Mask', false);
-Map.addLayer(ndwiMask, {palette:['blue']}, 'NDWI Mask');
+// Create AWEI mask
+var AWEIThreshold = AWEI_.gte(th);
+var AWEIMask = AWEIThreshold.updateMask(AWEIThreshold);
+Map.addLayer(AWEIThreshold, {palette:['black','white']}, 'AWEI Binary Mask', false);
+Map.addLayer(AWEIMask, {palette:['blue']}, 'AWEI Mask');
 // We can now calculate the masked areas pixel area
-var ndwiPixelArea = ee.Image.pixelArea().addBands(ndwiMask.select('NDWI')).divide(1e6).reduceRegion({
+var AWEIPixelArea = ee.Image.pixelArea().addBands(AWEIMask.select('AWEI')).divide(1e6).reduceRegion({
     reducer: ee.Reducer.sum().group(1),
     geometry: geometry,
     scale: 10,
     bestEffort: true
 });
 // We can now calculate the masked areas pixel area
-var ndwiPixelArea = ee.Image.pixelArea().addBands(ndwiMask.select('NDWI')).divide(1e6).reduceRegion({
+var AWEIPixelArea = ee.Image.pixelArea().addBands(AWEIMask.select('AWEI')).divide(1e6).reduceRegion({
     reducer: ee.Reducer.sum().group(1),
     geometry: geometry,
     scale: 10,
     bestEffort: true
 });
-var list = ee.List(ee.Dictionary(ndwiPixelArea).get('groups'));
+var list = ee.List(ee.Dictionary(AWEIPixelArea).get('groups'));
 var group0 = ee.Dictionary(list.get(0));
-var ndwiWaterArea = ee.Number(group0.get('sum')).float();
-print("Water area (km2):", ndwiWaterArea);
-var waterRatio = ndwiWaterArea.divide(aoiArea);
+var AWEIWaterArea = ee.Number(group0.get('sum')).float();
+print("Water area (km2):", AWEIWaterArea);
+var waterRatio = AWEIWaterArea.divide(aoiArea);
 //print("Water ratio from area:", waterRatio);
